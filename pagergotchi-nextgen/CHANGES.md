@@ -50,7 +50,7 @@ Added `[nextgen]` section:
 
 ```ini
 [nextgen]
-enabled = false
+enabled = true
 mode = active
 channels_per_epoch = 5
 max_targets_per_epoch = 20
@@ -63,6 +63,28 @@ bo_initial_epochs = 10
 
 - **Added**: `mode` text element to display state -- shows current NextGen mode (e.g., "NG:ACT", "NG:PAS", "NG:AST")
 - **Added**: `mode` case in theme color assignment
+
+## Post-Deployment Changes
+
+These changes were made after observing the system run on real hardware. They are included in the current codebase.
+
+### Intelligence Improvements (made live on hardware)
+
+1. **Bandit boost from recon** (`channel_bandit.py`, `__init__.py`): Added `boost(channel, weight)` method. `plan_attacks()` feeds client density per channel as a warm prior, solving the cold-start problem. Result: bandit selected productive channels on epoch 1 instead of taking 50+ epochs.
+
+2. **Per-client capture tracking** (`tactical_engine.py`): `CaptureContext` now parses client MACs from pineapd handshake filenames (`timestamp_APMAC_CLIENTMAC_handshake.22000`). Tracks which (AP, client) pairs have been captured via `_captured_clients` dict and `get_new_clients()` method.
+
+3. **Re-attack APs with new clients** (`tactical_engine.py`): `_score_active()` no longer blanket-skips captured APs. If new clients are present that haven't been captured, the AP gets a reduced positive score (up to 8.0 vs 10+ for uncaptured). More client handshakes = more PSK crack attempts.
+
+### Clean Exit Fix
+
+- **`main.py`**: Added signal handler (SIGTERM/SIGINT) with `sys.exit(0)`, `atexit` handler for service restoration, and `_restore_pager_services()` function that restarts pineapd then pineapplepager on exit. Signal handlers are re-registered after each `pager_init()` call because libpagerctl.so overrides Python's signal handlers at the C level.
+- **`view.py`**: `cleanup()` now resets display (brightness 100%, clear to black, flip) before calling `pager_cleanup()`.
+- **`payload.sh`**: Added `_restore_services()` function with `EXIT` trap as a shell-level safety net.
+
+### Startup Menu Mode Selector
+
+- **`menu.py`**: Added "Mode" menu item to startup menu. Cycles through Active/Passive/Assist when NextGen is enabled. Selection is persisted to `data/settings.json` and applied on startup.
 
 ## Design Decisions
 

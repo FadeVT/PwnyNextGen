@@ -942,9 +942,18 @@ class View:
                 state.reset()
 
     def cleanup(self):
-        """Clean up display"""
+        """Clean up display — reset to clean state before releasing hardware."""
         self._refresh_stop = True
         self._uptime_stop = True
         # Small delay to let threads see the stop flags
         time.sleep(0.1)
+        # Restore display to known-good state before releasing hardware.
+        # Without this, pager_cleanup() leaves the screen in whatever state
+        # it was in (frozen frame, half-drawn menu, etc.)
+        try:
+            self._display.set_brightness(100)
+            self._display.clear(Pager.BLACK)
+            self._display.flip()
+        except Exception:
+            pass
         self._display.cleanup()

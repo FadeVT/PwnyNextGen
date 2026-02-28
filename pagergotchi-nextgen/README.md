@@ -2,7 +2,7 @@
 
 ![Pagergotchi](https://img.shields.io/badge/Hak5-WiFi%20Pineapple%20Pager-green)
 
-A port of [Pwnagotchi](https://github.com/jayofelern/pwnagotchi) for the Hak5 WiFi Pineapple Pager.
+A fork of [Pagergotchi](https://github.com/pineapple-pager-projects/pineapple_pager_pagergotchi) (brAinphreAk's [Pwnagotchi](https://github.com/jayofelern/pwnagotchi) port for the Hak5 WiFi Pineapple Pager) with an optional NextGen intelligence layer that replaces stock brute-force attack logic with adaptive algorithms.
 
 ## Features
 
@@ -31,12 +31,15 @@ enabled = true
 mode = active
 ```
 
+You can also select the mode from the startup menu on the device.
+
 ### What NextGen Adds
 
-- **Channel Bandit** - Thompson Sampling selects which channels to scan based on past success rates. Learns which channels are productive and focuses there, while still exploring new ones. Tri-band aware (2.4/5/6 GHz).
-- **Tactical Engine** - Prioritizes targets by signal strength, client count, encryption type, and capture history. Skips already-captured networks and open networks. Routes the optimal attack type (assoc+deauth, deauth-only, broadcast deauth, or PMKID-only) per target.
-- **Bayesian Optimizer** - Tunes timing parameters (recon duration, deauth intervals) using Gaussian Process optimization. Converges to environment-optimal settings within ~50 epochs.
+- **Channel Bandit** - Thompson Sampling selects which channels to scan based on past success rates. Learns which channels are productive and focuses there, while still exploring new ones. Tri-band aware (2.4/5/6 GHz). Warm-started from recon data so it finds productive channels on the first epoch.
+- **Tactical Engine** - Prioritizes targets by signal strength, client count, encryption type, and capture history. Skips already-captured networks and open networks. Routes the optimal attack type (assoc+deauth, deauth-only, broadcast deauth, or PMKID-only) per target. Tracks captures per-client, not just per-AP, so new clients on already-captured APs still get attacked.
+- **Bayesian Optimizer** - Tunes timing parameters (recon duration, deauth intervals) using Gaussian Process optimization. Converges to environment-optimal settings within ~50 epochs. Pure Python, no dependencies.
 - **Skip Logic** - Eliminates wasted attacks on already-captured targets. In simulation, reduces wasted attacks from 90% to 0%.
+- **Clean Exit** - Signal handlers and service restoration ensure the Pager recovers cleanly when the payload exits (display restores, pineapplepager restarts).
 
 ### Operational Modes
 
@@ -50,7 +53,7 @@ mode = active
 
 ```ini
 [nextgen]
-enabled = false              # Toggle NextGen on/off (default: off)
+enabled = true               # Toggle NextGen on/off
 mode = active                # active, passive, or assist
 channels_per_epoch = 5       # Channels to scan per epoch
 max_targets_per_epoch = 20   # Max targets to attack per epoch
@@ -58,6 +61,20 @@ optimize_timing = true       # Enable Bayesian timing optimization
 bandit_window = 30           # Sliding window size for channel statistics
 bo_initial_epochs = 10       # Random exploration epochs before optimization kicks in
 ```
+
+Set `enabled = false` to disable NextGen and run with stock Pagergotchi behavior.
+
+### Real-World Results
+
+First deployment on a Hak5 WiFi Pineapple Pager targeting a home network:
+
+| Metric | Stock Hak5 Firmware | PwnyNextGen |
+|--------|---------------------|-------------|
+| Handshakes captured | 0 complete (37 partial) | **24+ complete 4-way EAPOL** |
+| Capture format | .pcap (partial) | .22000 (hashcat-ready) |
+| Channel convergence | N/A (sequential hop) | Found target channels on epoch 1 |
+
+The channel bandit identified the two productive channels (1 and 149) immediately using recon-boosted priors. Per-client tracking ensured new clients on already-captured APs were still attacked, and the skip logic eliminated all wasted cycles on open networks and completed captures.
 
 ### Simulation Results
 
@@ -69,12 +86,6 @@ Compared to stock Pagergotchi behavior in a simulated 50-AP environment over 100
 | Wasted attacks | 3,357 | 0 | -100% |
 | Waste ratio | 90.7% | 0.0% | -90.7 pts |
 | Memory footprint | -- | 26.6 KB | 0.01% of 256 MB |
-
-NextGen is dramatically more efficient: it makes the same capture decisions with 95% fewer attacks by not re-attacking captured networks and not wasting time on open or low-value targets.
-
-### Credits
-
-NextGen intelligence layer ported from [Project Jarvis](https://github.com/jayofelern/pwnagotchi) Phase 3A by NC. Original Pagergotchi by brAinphreAk. See [CHANGES.md](CHANGES.md) for a complete list of modifications.
 
 ## Installation
 
@@ -104,6 +115,7 @@ The startup menu provides these options:
 ![Startup Menu](screenshots/mainmenu.png)
 
 - **Start Pagergotchi** - Begin automated operation
+- **Mode** - Select NextGen mode (Active/Passive/Assist) when NextGen is enabled
 - **Deauth Scope** - Configure whitelist/blacklist
 - **Privacy** - Toggle display obfuscation (ON/OFF)
 - **WiGLE** - Toggle WiGLE CSV logging (ON/OFF)
@@ -298,6 +310,8 @@ All settings and configuration stay within the payload directory:
 | `data/recovery.json` | Attack history for all networks |
 | `data/session.json` | Last session statistics |
 | `data/custom_themes.json` | User-defined themes in hex color format (optional) |
+| `data/nextgen_state.json` | NextGen intelligence state (bandit priors, optimizer, captures) |
+| `data/pagergotchi.log` | Debug log with epoch-by-epoch decision history (when debug enabled) |
 | `data/.next_payload` | Temporary file for app handoff (auto-deleted) |
 
 ### Loot Directory (captured data)
@@ -422,9 +436,8 @@ pagergotchi/
 
 ## Credits
 
-- **Author**: brAinphreAk
-- **Website**: [www.brAinphreAk.net](http://www.brainphreak.net)
-- **Support**: [ko-fi.com/brainphreak](https://ko-fi.com/brainphreak)
+- **Pagergotchi**: [brAinphreAk](http://www.brainphreak.net) ([Support](https://ko-fi.com/brainphreak)) — built the Pwnagotchi port for the Hak5 Pager, solved all the hard platform problems (display, input, pineapd integration, themes, menus, GPS)
+- **NextGen Intelligence**: NC — ported the Thompson Sampling, tactical engine, and Bayesian optimizer from Project Jarvis Phase 3A. See [CHANGES.md](CHANGES.md) for all modifications.
 - **Based on**: [Pwnagotchi](https://github.com/evilsocket/pwnagotchi) by evilsocket
 - **Hardware**: [Hak5 WiFi Pineapple Pager](https://hak5.org)
 - **Display Library**: [pagerctl](https://github.com/pineapple-pager-projects/pineapple_pager_pagerctl)

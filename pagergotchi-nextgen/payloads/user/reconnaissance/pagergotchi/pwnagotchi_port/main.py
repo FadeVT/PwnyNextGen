@@ -7,6 +7,8 @@ import time
 import signal
 import sys
 import os
+import atexit
+import subprocess
 
 # Add lib directory to path for pagerctl import
 _lib_dir = os.path.join(os.path.dirname(__file__), '..', 'lib')
@@ -27,6 +29,41 @@ _exit_requested = False
 _agent_ref = None  # Reference to agent for setting its exit flag
 _button_monitor_stop = False  # Flag to stop button monitor thread
 _button_monitor_thread_ref = None  # Reference to thread for cleanup
+_services_restored = False  # Guard against double service restoration
+
+
+def _restore_pager_services():
+    """Restart the Pager's default services so the display and buttons work after exit.
+
+    Without this, the screen stays black and power button is unresponsive
+    because pineapplepager (which owns the display and button handling)
+    was stopped when the payload launched. pineapd must be started first
+    because pineapplepager depends on it.
+    """
+    global _services_restored
+    if _services_restored:
+        return
+    _services_restored = True
+    try:
+        if not os.path.exists('/etc/init.d/pineapplepager'):
+            return
+        # pineapd must be running before pineapplepager (dependency)
+        subprocess.Popen(
+            ['/etc/init.d/pineapd', 'start'],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).wait()
+        time.sleep(1)
+        subprocess.Popen(
+            ['/etc/init.d/pineapplepager', 'start'],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+
+
+atexit.register(_restore_pager_services)
 
 
 def _button_monitor_thread(display):
@@ -483,11 +520,30 @@ def main():
     # Load plugins (stub)
     plugins.load(config)
 
+    # Signal handler — registered once before the main loop.
+    # Uses sys.exit(0) so the process actually terminates even when
+    # blocking on input (startup menu, etc.). The SystemExit exception
+    # propagates through all finally blocks, ensuring cleanup runs
+    # exactly once. The atexit handler is a safety net for service restore.
+    def signal_handler(sig, frame):
+        global _exit_requested
+        logging.info("Received signal %d, shutting down...", sig)
+        _exit_requested = True
+        if _agent_ref:
+            _agent_ref._exit_requested = True
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
     # Main loop - allows returning to startup menu
     while True:
         # Show startup menu (Pager-specific addition)
         from pwnagotchi_port.ui.menu import StartupMenu
         startup_menu = StartupMenu(config)
+        # pager_init() overrides signal handlers — re-register ours
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
 
         try:
             if not startup_menu.show_main_menu():
@@ -508,22 +564,12 @@ def main():
 
         # Create display/view
         view = View(config)
+        # pager_init() overrides signal handlers — re-register ours
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
 
         # Create agent
         agent = Agent(view=view, config=config)
-
-        # Signal handler
-        def signal_handler(sig, frame):
-            logging.info("Received signal %d, shutting down...", sig)
-            stop_button_monitor()
-            agent._save_recovery_data()
-            agent.stop()  # Stop backend and cleanup tcpdump
-            view.on_shutdown()
-            view.cleanup()
-            sys.exit(0)
-
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
 
         result = 'exit'
         try:
@@ -538,10 +584,17 @@ def main():
             agent._save_recovery_data()
             agent.stop()  # Stop backend and cleanup tcpdump
             view.on_shutdown()
+            time.sleep(0.5)  # Brief pause so user sees shutdown face
             view.cleanup()
+            # Restart pineapplepager on final exit only — not when returning
+            # to menu (would conflict with new View) or launching another payload
+            if result not in ('main_menu', 'launch'):
+                _restore_pager_services()
 
         # Check result
         if result == 'launch':
+            global _services_restored
+            _services_restored = True  # Don't restore services, another payload takes over
             logging.info("Exiting with code 42 to launch next payload")
             return 42
 

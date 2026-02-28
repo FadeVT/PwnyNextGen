@@ -10,6 +10,19 @@
 PAYLOAD_DIR="/root/payloads/user/reconnaissance/pagergotchi"
 DATA_DIR="$PAYLOAD_DIR/data"
 
+# Ensure Pager services are restored on ANY exit (normal, signal, crash).
+# Without this, a killed shell leaves the display black and buttons dead.
+_restore_services() {
+    killall python3 2>/dev/null
+    sleep 0.5
+    /etc/init.d/pineapd start 2>/dev/null &
+    /etc/init.d/php8-fpm start 2>/dev/null &
+    /etc/init.d/nginx start 2>/dev/null &
+    /etc/init.d/bluetoothd start 2>/dev/null &
+    /etc/init.d/pineapplepager start 2>/dev/null &
+}
+trap _restore_services EXIT
+
 cd "$PAYLOAD_DIR" || {
     LOG "red" "ERROR: $PAYLOAD_DIR not found"
     exit 1
@@ -308,11 +321,4 @@ while true; do
     break
 done
 
-sleep 1
-
-# Restore services on final exit
-/etc/init.d/pineapd start 2>/dev/null &
-/etc/init.d/php8-fpm start 2>/dev/null &
-/etc/init.d/nginx start 2>/dev/null &
-/etc/init.d/bluetoothd start 2>/dev/null &
-/etc/init.d/pineapplepager start 2>/dev/null &
+# Services are restored by the EXIT trap (_restore_services)
