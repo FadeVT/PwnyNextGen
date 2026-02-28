@@ -1,0 +1,23 @@
+# Upstream reference (not our code)
+pagergotchi-upstream/
+
+# Device backup (contains loot, large)
+pager-backup/
+
+# Phase 3A reference source (from Pi pwnagotchi, separate project)
+phase3a/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Runtime data (generated on device)
+data/pagergotchi.log
+data/session.json
+data/recovery.json
+data/nextgen_state.json
+
+# OS junk
+.DS_Store
+Thumbs.db

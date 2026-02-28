@@ -1,0 +1,36 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so.dSYM
+.Python
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Runtime data (created on device)
+data/settings.json
+data/recovery.json
+data/session.json
+data/.next_payload
+*.log
+
+# Backups
+*.backup
+*.bak
+*~
+
+# Screenshot capture tools
+capture_screenshot.py
+capture_screenshot.sh
