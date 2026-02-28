@@ -216,7 +216,7 @@ class Epoch(object):
                          self.num_assocs,
                          self.num_shakes,
                          cpu * 100,
-                         mem * 100,
+                         mem,
                          temp))
 
         self.epoch += 1

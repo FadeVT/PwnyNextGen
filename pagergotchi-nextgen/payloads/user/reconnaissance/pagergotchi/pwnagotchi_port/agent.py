@@ -272,7 +272,40 @@ class Agent(Client, Automata, AsyncAdvertiser):
         return False
 
     def get_access_points(self):
-        # Get whitelist/blacklist from settings
+        """Get ALL visible non-open APs (no target filtering).
+
+        Returns every encrypted AP that pineapd can see. This feeds the
+        bandit for channel intelligence so the brain stays aware of the
+        full RF environment even when a targetlist is active.
+        """
+        aps = []
+        try:
+            s = self.session()
+            plugins.on("unfiltered_ap_list", self, s['wifi']['aps'])
+            for ap in s['wifi']['aps']:
+                # Skip open networks
+                if ap.get('encryption', '') == '' or ap.get('encryption', '') == 'OPEN':
+                    continue
+                aps.append(ap)
+        except Exception as e:
+            logging.exception("Error while getting access points (%s)", e)
+
+        aps.sort(key=lambda ap: ap.get('channel', 0))
+        return self.set_access_points(aps)
+
+    def get_targetable_aps(self, all_aps):
+        """Filter APs through whitelist/blacklist (targetlist) for attack planning.
+
+        - If blacklist has entries: ONLY attack those (targetlist / include-only mode)
+        - If whitelist has entries: attack everything EXCEPT those (exclude mode)
+        - If neither: all APs are targetable
+
+        Args:
+            all_aps: list of AP dicts from get_access_points()
+
+        Returns:
+            list of AP dicts that are valid attack targets
+        """
         whitelist = self._settings.get('whitelist', [])
         blacklist = self._settings.get('blacklist', [])
 
@@ -282,32 +315,24 @@ class Agent(Client, Automata, AsyncAdvertiser):
             if ssid and not any(e.get('ssid', '').lower() == ssid.lower() for e in whitelist):
                 whitelist.append({'ssid': ssid, 'bssid': ''})
 
-        aps = []
-        try:
-            s = self.session()
-            plugins.on("unfiltered_ap_list", self, s['wifi']['aps'])
-            for ap in s['wifi']['aps']:
-                # Skip open networks
-                if ap.get('encryption', '') == '' or ap.get('encryption', '') == 'OPEN':
-                    continue
+        # No filters active — everything is targetable
+        if not blacklist and not whitelist:
+            return list(all_aps)
 
-                # If blacklist has entries, ONLY target those (blacklist mode)
-                if blacklist:
-                    if self._ap_matches_list(ap, blacklist):
-                        aps.append(ap)
-                    # Skip if not in blacklist
-                    continue
+        targets = []
+        for ap in all_aps:
+            # If blacklist has entries, ONLY target those (targetlist mode)
+            if blacklist:
+                if self._ap_matches_list(ap, blacklist):
+                    targets.append(ap)
+                continue
 
-                # Otherwise, use whitelist to exclude (whitelist mode)
-                if self._ap_matches_list(ap, whitelist):
-                    continue
+            # Otherwise, use whitelist to exclude
+            if self._ap_matches_list(ap, whitelist):
+                continue
+            targets.append(ap)
 
-                aps.append(ap)
-        except Exception as e:
-            logging.exception("Error while getting access points (%s)", e)
-
-        aps.sort(key=lambda ap: ap.get('channel', 0))
-        return self.set_access_points(aps)
+        return targets
 
     def get_total_aps(self):
         return self._tot_aps

@@ -67,8 +67,12 @@ class PineAPBackend:
         self.current_channel = 0
         self.focused_bssid = None
 
+        # Flag to suppress noisy startup log messages
+        self._startup_complete = False
+
         # Scan existing handshakes on init so count is available immediately
         self._scan_existing_handshakes()
+        self._startup_complete = True
 
     def _ensure_pineapd_handshakes(self):
         """Ensure pineapd is running with handshake capture enabled.
@@ -423,7 +427,11 @@ class PineAPBackend:
         if ap_mac_from_file and essid:
             mac_formatted = ':'.join(ap_mac_from_file[i:i+2] for i in range(0, 12, 2))
             self._learned_essids[mac_formatted] = essid
-            logging.info(f"[PineAP] Learned ESSID '{essid}' for {mac_formatted}")
+            # Only log at INFO for genuinely new captures (not startup scan)
+            if self._startup_complete:
+                logging.info(f"[PineAP] Learned ESSID '{essid}' for {mac_formatted}")
+            else:
+                logging.debug(f"[PineAP] Learned ESSID '{essid}' for {mac_formatted}")
 
         # Try to extract MAC from filename
         # Format: {MAC}_handshake.22000 or {MAC}.22000
@@ -501,10 +509,16 @@ class PineAPBackend:
                 bufsize=1  # Line buffered
             )
 
+            last_prune = time.time()
             while self.running and self._client_tracker_proc.poll() is None:
                 line = self._client_tracker_proc.stdout.readline()
                 if line:
                     self._parse_tcpdump_line(line.strip())
+                # Prune stale clients every 60 seconds
+                now = time.time()
+                if now - last_prune >= 60:
+                    self._prune_stale_clients()
+                    last_prune = now
 
         except Exception as e:
             logging.error(f"[ClientTracker] Error: {e}")
@@ -611,6 +625,31 @@ class PineAPBackend:
             else:
                 # Update last seen
                 self.clients[ap_mac][client_mac]['last_seen'] = time.time()
+
+    def _prune_stale_clients(self):
+        """Remove client records that haven't been seen in 2x sta_ttl (10 min).
+
+        Without this, the clients dict grows unbounded as new MACs are
+        observed over hours of operation, causing a slow memory leak.
+        """
+        cutoff = time.time() - 600  # 2 * 300s sta_ttl
+        pruned = 0
+        with self._clients_lock:
+            empty_aps = []
+            for ap_mac, client_dict in self.clients.items():
+                stale_macs = [
+                    mac for mac, data in client_dict.items()
+                    if data['last_seen'] < cutoff
+                ]
+                for mac in stale_macs:
+                    del client_dict[mac]
+                    pruned += 1
+                if not client_dict:
+                    empty_aps.append(ap_mac)
+            for ap_mac in empty_aps:
+                del self.clients[ap_mac]
+        if pruned:
+            logging.debug("[ClientTracker] Pruned %d stale client records", pruned)
 
     def _get_clients_for_ap(self, ap_mac):
         """Get list of clients for an AP in bettercap format"""

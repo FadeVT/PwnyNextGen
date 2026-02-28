@@ -263,21 +263,28 @@ def _do_nextgen_loop(agent):
             if should_exit() or should_return_to_menu():
                 break
 
-            # Phase 2: Get all visible APs (filtered by whitelist/blacklist)
+            # Phase 2: Get ALL visible APs (unfiltered) for intelligence
             all_aps = agent.get_access_points()
             logging.debug("[NG-LOOP] Found %d visible APs", len(all_aps))
 
             if should_exit() or should_return_to_menu():
                 break
 
+            # Phase 2b: Feed full environment to bandit (before filtering)
+            nextgen.observe_environment(all_aps)
+
+            # Phase 2c: Filter to targetable APs only (whitelist/blacklist)
+            targetable = agent.get_targetable_aps(all_aps)
+            logging.debug("[NG-LOOP] %d targetable APs (of %d visible)", len(targetable), len(all_aps))
+
             # Phase 3: Channel bandit selects which channels to focus on
             selected_channels = nextgen.select_channels(k=channels_per_epoch)
             logging.info("[NG-LOOP] Bandit selected channels: %s", selected_channels)
 
-            # Phase 4: Tactical engine creates attack plan from visible APs
-            plan = nextgen.plan_attacks(all_aps)
-            logging.info("[NG-LOOP] Tactical plan: %d targets (of %d visible)",
-                         len(plan), len(all_aps))
+            # Phase 4: Tactical engine creates attack plan from targetable APs
+            plan = nextgen.plan_attacks(targetable)
+            logging.info("[NG-LOOP] Tactical plan: %d targets (of %d targetable, %d visible)",
+                         len(plan), len(targetable), len(all_aps))
 
             # Phase 5: Execute plan, channel by channel
             for ch in selected_channels:

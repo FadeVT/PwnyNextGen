@@ -180,8 +180,16 @@ class GPS:
         return None
 
     def _gpsd_loop(self):
-        """Background thread to read from gpsd"""
+        """Background thread to read from gpsd.
+
+        Uses exponential backoff (5s → 60s cap) and a circuit breaker
+        to avoid spamming logs when gpsd is unreachable.
+        """
         import socket
+
+        consecutive_failures = 0
+        backoff = 5
+        warned = False
 
         while self._running:
             try:
@@ -189,6 +197,13 @@ class GPS:
                 sock.settimeout(5)
                 sock.connect(('127.0.0.1', 2947))
                 sock.send(b'?WATCH={"enable":true,"json":true}\n')
+
+                # Connected — reset backoff
+                consecutive_failures = 0
+                backoff = 5
+                if warned:
+                    logging.info("[GPS] gpsd connection restored")
+                    warned = False
 
                 buffer = ''
                 while self._running:
@@ -203,9 +218,17 @@ class GPS:
 
                 sock.close()
             except Exception as e:
-                logging.debug(f"[GPS] gpsd error: {e}")
+                consecutive_failures += 1
+                if consecutive_failures <= 3:
+                    logging.debug("[GPS] gpsd error: %s (attempt %d)", e, consecutive_failures)
+                elif not warned:
+                    logging.warning("[GPS] gpsd unavailable after %d attempts, backing off to %ds retries",
+                                    consecutive_failures, min(backoff * 2, 60))
+                    warned = True
+                # Exponential backoff: 5 → 10 → 20 → 40 → 60 (cap)
+                backoff = min(backoff * 2, 60)
 
-            time.sleep(5)  # Retry delay
+            time.sleep(backoff)
 
     def _parse_gpsd_json(self, line):
         """Parse gpsd JSON output"""

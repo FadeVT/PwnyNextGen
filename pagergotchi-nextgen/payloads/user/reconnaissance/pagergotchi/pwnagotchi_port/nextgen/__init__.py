@@ -146,6 +146,8 @@ class NextGenBrain:
         self._epoch_channels_scanned = 0
         self._epoch_channels_with_activity = 0
         self._epoch_new_aps = 0
+        self._epoch_total_visible = 0
+        self._epoch_total_targetable = 0
         self._known_ap_macs = set()
 
         # Try to restore previous state
@@ -188,17 +190,19 @@ class NextGenBrain:
         self._epoch_channels_scanned += len(channels)
         return channels
 
-    def plan_attacks(self, access_points):
-        """Create a prioritized attack plan for visible APs.
+    def observe_environment(self, all_aps):
+        """Feed ALL visible APs to the bandit for channel intelligence.
+
+        This must receive unfiltered APs so the bandit learns the full RF
+        landscape even when a targetlist restricts which APs get attacked.
 
         Args:
-            access_points: list of AP dicts from agent
-
-        Returns:
-            list of (ap, attack_type, score) tuples, sorted by score descending
+            all_aps: list of ALL non-open AP dicts from agent.get_access_points()
         """
+        self._epoch_total_visible = len(all_aps)
+
         # Track new APs
-        for ap in access_points:
+        for ap in all_aps:
             mac = ap.get('mac', '').lower()
             if mac and mac not in self._known_ap_macs:
                 self._known_ap_macs.add(mac)
@@ -206,7 +210,7 @@ class NextGenBrain:
 
         # Track per-channel client activity and feed to bandit
         channel_clients = {}
-        for ap in access_points:
+        for ap in all_aps:
             ch = ap.get('channel', 0)
             if ch > 0:
                 channel_clients[ch] = channel_clients.get(ch, 0) + len(ap.get('clients', []))
@@ -219,8 +223,19 @@ class NextGenBrain:
                 boost_weight = min(count * 0.1, 0.5)
                 self._bandit.boost(ch, boost_weight)
 
+    def plan_attacks(self, targetable_aps):
+        """Create a prioritized attack plan for targetable APs only.
+
+        Args:
+            targetable_aps: list of AP dicts filtered through whitelist/blacklist
+
+        Returns:
+            list of (ap, attack_type, score) tuples, sorted by score descending
+        """
+        self._epoch_total_targetable = len(targetable_aps)
+
         # Get tactical plan
-        plan = self._tactical.plan_epoch(access_points)
+        plan = self._tactical.plan_epoch(targetable_aps)
 
         # Track stats
         self._epoch_targets_attacked = len(plan)
@@ -317,6 +332,7 @@ class NextGenBrain:
             self._apply_timing()
 
         # Log epoch summary
+        skipped = self._epoch_total_targetable - self._epoch_targets_attacked
         if self._mode == MODE_ASSIST:
             log.info("[NextGen][ASSIST] epoch %d: %d targets attacked, %d new hs",
                      epoch_num, self._epoch_targets_attacked, self._epoch_new_handshakes)
@@ -324,10 +340,13 @@ class NextGenBrain:
             log.info("[NextGen][PASSIVE] epoch %d: %d natural hs",
                      epoch_num, self._epoch_new_handshakes)
         else:
-            log.info("[NextGen] epoch %d: %d new hs, %d targets, %d skipped, bandit=%s",
+            log.info("[NextGen] epoch %d: %d new hs, %d visible, %d targetable, "
+                     "%d attacked, %d skipped, bandit=%s",
                      epoch_num, self._epoch_new_handshakes,
+                     self._epoch_total_visible,
+                     self._epoch_total_targetable,
                      self._epoch_targets_attacked,
-                     self._epoch_uncaptured_attacked,
+                     skipped,
                      repr(self._bandit))
 
         # Reset epoch counters
@@ -339,6 +358,8 @@ class NextGenBrain:
         self._epoch_channels_scanned = 0
         self._epoch_channels_with_activity = 0
         self._epoch_new_aps = 0
+        self._epoch_total_visible = 0
+        self._epoch_total_targetable = 0
 
         # Periodically save state
         if epoch_num % 10 == 0:
@@ -356,6 +377,7 @@ class NextGenBrain:
         if self._current_timing is None:
             return
 
+        log.info("[NextGen] optimizer timing: %s", self._current_timing)
         personality = self._config.get('personality', {})
         for param, value in self._current_timing.items():
             if param in personality:
