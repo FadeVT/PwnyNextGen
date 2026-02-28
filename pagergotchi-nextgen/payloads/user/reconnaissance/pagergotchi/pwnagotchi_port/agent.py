@@ -70,8 +70,10 @@ class Agent(Client, Automata, AsyncAdvertiser):
         self._history = {}
         self._handshakes = {}
         self._session_handshakes = 0  # Handshakes captured this session
+        self._session_pwnd_macs = set()  # Unique AP MACs captured THIS session
         self._last_total_handshakes = 0  # For detecting new handshakes
         self._known_handshake_files = set()  # Track seen files directly
+        self._pwnd_ap_macs = set()  # Unique AP MACs across ALL handshake files (PWND count)
         self._pineap_handshakes_dir = '/root/loot/handshakes'  # PineAP saves here (not config path!)
         self.last_session = LastSession(self._config)
         self.mode = 'auto'
@@ -209,7 +211,14 @@ class Agent(Client, Automata, AsyncAdvertiser):
         # Initialize known handshakes from directory so we only track NEW ones this session
         pattern = os.path.join(self._pineap_handshakes_dir, '*.22000')
         self._known_handshake_files = set(glob(pattern))
-        logging.info(f"[agent] Starting with {len(self._known_handshake_files)} existing handshakes")
+        # Extract unique AP MACs from existing files for PWND count
+        self._pwnd_ap_macs = set()
+        for f in self._known_handshake_files:
+            ap_mac = self._extract_ap_mac_from_filename(f)
+            if ap_mac:
+                self._pwnd_ap_macs.add(ap_mac)
+        logging.info("[agent] Starting with %d handshake files (%d unique networks)",
+                     len(self._known_handshake_files), len(self._pwnd_ap_macs))
         self.start_event_polling()
         self.start_session_fetcher()
         # Start GPS (optional - no error if not available)
@@ -390,6 +399,21 @@ class Agent(Client, Automata, AsyncAdvertiser):
                 [len(ap.get('clients', [])) for ap in self._access_points if ap.get('channel') == self._current_channel])
             self._view.set('aps', '%d (%d)' % (self._aps_on_channel, self._tot_aps))
 
+    @staticmethod
+    def _extract_ap_mac_from_filename(filepath):
+        """Extract AP MAC from pineapd handshake filename.
+
+        Filename format: {timestamp}_{APMAC}_{CLIENTMAC}_handshake.22000
+        Returns lowercase colon-separated MAC or None.
+        """
+        filename = os.path.basename(filepath)
+        # Match the AP MAC (second 12-hex-digit group after the timestamp)
+        match = re.match(r'\d+_([0-9A-Fa-f]{12})_', filename)
+        if match:
+            raw = match.group(1).lower()
+            return ':'.join(raw[i:i+2] for i in range(0, 12, 2))
+        return None
+
     def _check_handshakes_direct(self):
         """Directly scan handshake directory for new files"""
         # Find all .22000 files
@@ -404,6 +428,12 @@ class Agent(Client, Automata, AsyncAdvertiser):
         self._known_handshake_files = current_files
 
         if new_count > 0:
+            # Track unique AP MACs for PWND count
+            for f in new_files:
+                ap_mac = self._extract_ap_mac_from_filename(f)
+                if ap_mac:
+                    self._pwnd_ap_macs.add(ap_mac)
+                    self._session_pwnd_macs.add(ap_mac)
 
             # Get SSID from newest file (by modification time)
             newest_file = max(new_files, key=os.path.getmtime)
@@ -444,12 +474,13 @@ class Agent(Client, Automata, AsyncAdvertiser):
             self._epoch.track(handshake=True, inc=new_shakes)
             self._session_handshakes += new_shakes
 
-        # Total = number of .22000 files in handshakes directory
-        total_known = len(self._known_handshake_files)
-        # Display: session_captures (total_known)
-        txt = '%d (%d)' % (self._session_handshakes, total_known)
+        # PWND = unique networks (unique AP MACs), not raw file count
+        session_pwnd = len(self._session_pwnd_macs)
+        total_pwnd = len(self._pwnd_ap_macs)
+        # Display: session_unique (total_unique)
+        txt = '%d (%d)' % (session_pwnd, total_pwnd)
 
-        if self._last_pwnd is not None and self._session_handshakes > 0:
+        if self._last_pwnd is not None and session_pwnd > 0:
             # Only show SSID if we captured something THIS session
             display_name = self._last_pwnd
             if self._settings.get('privacy_mode', False):
