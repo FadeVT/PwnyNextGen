@@ -437,7 +437,7 @@ pagergotchi/
 ## Credits
 
 - **Pagergotchi**: [brAinphreAk](http://www.brainphreak.net) ([Support](https://ko-fi.com/brainphreak)) — built the Pwnagotchi port for the Hak5 Pager, solved all the hard platform problems (display, input, pineapd integration, themes, menus, GPS)
-- **NextGen Intelligence**: NC — ported the Thompson Sampling, tactical engine, and Bayesian optimizer from Project Jarvis Phase 3A. See [CHANGES.md](CHANGES.md) for all modifications.
+- **NextGen Intelligence**: [FadeVT](https://github.com/FadeVT) — Thompson Sampling channel selection, tactical target prioritization, Bayesian timing optimization. See [CHANGES.md](CHANGES.md) for all modifications.
 - **Based on**: [Pwnagotchi](https://github.com/evilsocket/pwnagotchi) by evilsocket
 - **Hardware**: [Hak5 WiFi Pineapple Pager](https://hak5.org)
 - **Display Library**: [pagerctl](https://github.com/pineapple-pager-projects/pineapple_pager_pagerctl)
